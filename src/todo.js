@@ -1,24 +1,22 @@
-// TodoManager owns the whole app: task data, persistence, and rendering.
-class TodoManager {
-  constructor(containerId) {
+// Owns the tasks and their business rules; storage is supplied by the caller.
+class TodoService {
+  constructor(storageHandler) {
     this.tasks = [];
-    this.container = document.getElementById(containerId);
+    this.storageHandler = storageHandler;
     this.loadTasks();
   }
 
   loadTasks() {
-    const raw = localStorage.getItem('todo-tasks');
-    this.tasks = raw ? JSON.parse(raw) : [];
+    this.tasks = this.storageHandler.load();
   }
 
   saveTasks() {
-    localStorage.setItem('todo-tasks', JSON.stringify(this.tasks));
+    this.storageHandler.save(this.tasks);
   }
 
   addTask(description, type) {
     const trimmed = description.trim();
     if (trimmed.length < 3) {
-      alert('Task needs at least a few characters.');
       return false;
     }
 
@@ -41,8 +39,7 @@ class TodoManager {
 
     this.tasks.push(task);
     this.saveTasks();
-    this.render(task.id);
-    return true;
+    return task;
   }
 
   toggleComplete(id) {
@@ -50,18 +47,34 @@ class TodoManager {
     if (!task) return;
     task.completed = !task.completed;
     this.saveTasks();
-    this.render();
   }
 
   deleteTask(id) {
     this.tasks = this.tasks.filter(t => t.id !== id);
     this.saveTasks();
-    this.render();
+  }
+}
+
+// Owns rendering and UI feedback, and calls the service from its event handlers.
+class TodoRenderer {
+  constructor(containerId, service) {
+    this.container = document.getElementById(containerId);
+    this.service = service;
+  }
+
+  addTask(description, type) {
+    const task = this.service.addTask(description, type);
+    if (!task) {
+      alert('Task needs at least a few characters.');
+      return false;
+    }
+    this.render(task.id);
+    return true;
   }
 
   renderPendingRows() {
     let html = '';
-    for (const task of this.tasks) {
+    for (const task of this.service.tasks) {
       if (task.completed) continue;
       html += buildTaskRow(task.id, task.desc, task.completed, task.priority, task.createdAt, true);
     }
@@ -70,7 +83,7 @@ class TodoManager {
 
   renderCompletedRows() {
     let html = '';
-    for (const task of this.tasks) {
+    for (const task of this.service.tasks) {
       if (!task.completed) continue;
       html += buildTaskRow(task.id, task.desc, task.completed, task.priority, task.createdAt, true);
     }
@@ -84,7 +97,7 @@ class TodoManager {
     const completedHtml = this.renderCompletedRows();
 
     let oldestPendingLabel = 'none';
-    for (const task of this.tasks) {
+    for (const task of this.service.tasks) {
       if (!task.completed) {
         oldestPendingLabel = task.desc;
         break;
@@ -92,7 +105,7 @@ class TodoManager {
     }
 
     this.container.innerHTML =
-      `<p class="status">${summarizeWorkload(this)} - oldest: ${oldestPendingLabel}</p>` +
+      `<p class="status">${summarizeWorkload(this.service)} - oldest: ${oldestPendingLabel}</p>` +
       '<h2 class="section-title">To do</h2>' +
       `<ul>${pendingHtml || '<li>Nothing pending. Add a task above.</li>'}</ul>` +
       '<h2 class="section-title">Completed</h2>' +
@@ -100,12 +113,18 @@ class TodoManager {
 
     const toggleButtons = this.container.querySelectorAll('[data-toggle]');
     for (const btn of toggleButtons) {
-      btn.addEventListener('click', () => this.toggleComplete(Number(btn.dataset.toggle)));
+      btn.addEventListener('click', () => {
+        this.service.toggleComplete(Number(btn.dataset.toggle));
+        this.render();
+      });
     }
 
     const deleteButtons = this.container.querySelectorAll('[data-delete]');
     for (const btn of deleteButtons) {
-      btn.addEventListener('click', () => this.deleteTask(Number(btn.dataset.delete)));
+      btn.addEventListener('click', () => {
+        this.service.deleteTask(Number(btn.dataset.delete));
+        this.render();
+      });
     }
 
     if (justAddedId) {
@@ -116,7 +135,7 @@ class TodoManager {
       }
     }
 
-    document.title = `Todo (${this.tasks.filter(t => !t.completed).length})`;
+    document.title = `Todo (${this.service.tasks.filter(t => !t.completed).length})`;
   }
 }
 
@@ -159,8 +178,22 @@ function summarizeWorkload(manager) {
   return `${done}/${total} done - ${urgent} urgent, ${normal} normal remaining`;
 }
 
+// Owns browser persistence behind the load()/save(tasks) contract.
+class ToDoStorage {
+  load() {
+    const raw = localStorage.getItem('todo-tasks');
+    return raw ? JSON.parse(raw) : [];
+  }
+
+  save(tasks) {
+    localStorage.setItem('todo-tasks', JSON.stringify(tasks));
+  }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
-  const app = new TodoManager('task-container');
+  const storage = new ToDoStorage();
+  const service = new TodoService(storage);
+  const app = new TodoRenderer('task-container', service);
   app.render();
 
   const input = document.getElementById('task-input');
